@@ -1,0 +1,455 @@
+// Piece → A4 타일 1:1 PDF
+//
+// 절대 조건: 1:1 실치수. x=30 이면 출력물 완성선 가로가 실제 30cm.
+// 미리보기와 동일한 좌표 데이터로 생성한다 (이미지 변환 없음).
+//
+// 한글 텍스트: 오픈 한글 폰트(ArrayBuffer)가 주어지면 임베드해 한글로,
+// 없으면 Helvetica + ASCII 문자열로 폴백한다. 도안 자체(선/치수)는 폰트와 무관.
+
+import {
+  PDFDocument,
+  PDFFont,
+  PDFPage,
+  StandardFonts,
+  rgb,
+  pushGraphicsState,
+  popGraphicsState,
+  moveTo,
+  lineTo,
+  closePath,
+  clip,
+  endPath,
+} from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import type { PatternSet, Piece, Pt, Segment } from './types';
+import { bounds, cutVertices, vertices } from './allowance';
+
+export const PT_PER_CM = 28.3465; // 1cm = 28.3465pt
+const A4W = 21.0; // cm
+const A4H = 29.7; // cm
+const MARGIN = 1.0; // cm (10mm)
+const OVERLAP = 1.0; // cm (10mm)
+
+const INK = rgb(0.08, 0.08, 0.08);
+const ACCENT = rgb(0.7, 0.23, 0.18);
+const FRAME = rgb(0.6, 0.6, 0.6);
+
+const usableW = A4W - 2 * MARGIN;
+const usableH = A4H - 2 * MARGIN;
+const strideX = usableW - OVERLAP;
+const strideY = usableH - OVERLAP;
+
+// dash 패턴(pt)
+const DASH = {
+  sew: [4, 3],
+  fold: [11, 3, 2.5, 3],
+};
+
+type TileWindow = { x0: number; y0: number; row: number; col: number };
+
+function cm(v: number): number {
+  return v * PT_PER_CM;
+}
+
+// 한/영 라벨 테이블
+type Strings = {
+  bodyLabel: (n: string) => string;
+  strap: string;
+  cut: string;
+  sew: string;
+  fold: string;
+  legendTitle: string;
+  calTitle: string;
+  printNotice: string;
+  verify: string;
+  verifyNote: string;
+  pageMap: string;
+  seamTitle: string;
+  seam1: string;
+  seam2: string;
+  seam3: string;
+};
+
+const KO: Strings = {
+  bodyLabel: (n) => n,
+  strap: '끈 위치',
+  cut: '재단선 (실선)',
+  sew: '완성선 (점선)',
+  fold: '골선 (쇄선)',
+  legendTitle: '선 안내',
+  calTitle: '낭만바늘 가방 패턴 — 인쇄 안내',
+  printNotice: '페이지에 맞춤 없이, 실제 크기(100%)로 인쇄하세요.',
+  verify: '10cm 검증용 정사각형',
+  verifyNote: '자로 재어 정확히 10cm 인지 확인하세요. 다르면 인쇄 배율이 100%가 아닙니다.',
+  pageMap: '페이지 배치',
+  seamTitle: '시접 안내',
+  seam1: '바닥 부분은 골선으로 재단하여 시접이 없습니다.',
+  seam2: '그 외 부분은 기본 시접 1cm가 포함되어 있습니다.',
+  seam3: '봉제 방법·소재에 따라 필요한 시접의 양은 달라질 수 있습니다.',
+};
+
+// 한글 폰트 없을 때 (WinAnsi 안전) — 조각명은 romanize
+const ASCII: Strings = {
+  bodyLabel: (n) => (n === '본체' ? 'BODY' : n === '끈' ? 'STRAP' : n),
+  strap: 'strap',
+  cut: 'cut line (solid)',
+  sew: 'seam line (dashed)',
+  fold: 'fold line (chain)',
+  legendTitle: 'Legend',
+  calTitle: 'Bag Pattern — Print Guide',
+  printNotice: 'Print at 100% (Actual size). Do NOT "fit to page".',
+  verify: '10 cm calibration square',
+  verifyNote: 'Measure with a ruler. If it is not exactly 10 cm, the print scale is not 100%.',
+  pageMap: 'Page layout',
+  seamTitle: 'Seam allowance',
+  seam1: 'The bottom edge is on the fold — no seam allowance there.',
+  seam2: 'All other edges include a 1 cm seam allowance.',
+  seam3: 'Required allowance may vary with sewing method and fabric.',
+};
+
+/** 콘텐츠(모든 재단선 + 마크) 바운딩 (cm). */
+function contentBounds(set: PatternSet) {
+  const pts: Pt[] = [];
+  for (const p of set.pieces) pts.push(...cutVertices(p));
+  for (const m of set.marks) {
+    pts.push({ x: m.at.x, y: m.at.y - m.tick });
+    pts.push({ x: m.at.x, y: m.at.y });
+  }
+  return bounds(pts);
+}
+
+type Box = { minX: number; minY: number; maxX: number; maxY: number };
+
+function overlaps(a: Box, b: Box): boolean {
+  return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+}
+
+/**
+ * 타일 윈도우 계산. 격자 전체가 아니라, 실제 콘텐츠(조각 재단선 박스)가
+ * 걸치는 타일만 생성한다 → 좁고 긴 끈 아래의 빈 타일 등을 건너뛰어 페이지 절약.
+ */
+function computeTiles(bb: Box, contentBoxes: Box[]): TileWindow[] {
+  const w = bb.maxX - bb.minX;
+  const h = bb.maxY - bb.minY;
+  const cols = w <= usableW ? 1 : Math.ceil((w - OVERLAP) / strideX);
+  const rows = h <= usableH ? 1 : Math.ceil((h - OVERLAP) / strideY);
+  const tiles: TileWindow[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const win: Box = {
+        minX: bb.minX + c * strideX,
+        minY: bb.minY + r * strideY,
+        maxX: bb.minX + c * strideX + usableW,
+        maxY: bb.minY + r * strideY + usableH,
+      };
+      if (contentBoxes.some((box) => overlaps(win, box))) {
+        tiles.push({ x0: win.minX, y0: win.minY, row: r, col: c });
+      }
+    }
+  }
+  return tiles;
+}
+
+const rowLetter = (r: number) => String.fromCharCode(65 + r); // 0→A
+
+/** 콘텐츠 cm 좌표 → 페이지 pt 좌표 (y 위로). */
+function toPage(cx: number, cy: number, win: TileWindow): { x: number; y: number } {
+  const xCm = MARGIN + (cx - win.x0);
+  const yCmTopDown = MARGIN + (cy - win.y0);
+  return { x: cm(xCm), y: cm(A4H - yCmTopDown) };
+}
+
+function drawLineCm(
+  page: PDFPage,
+  a: Pt,
+  b: Pt,
+  win: TileWindow,
+  opts: { color: any; thickness: number; dash?: number[] },
+) {
+  const pa = toPage(a.x, a.y, win);
+  const pb = toPage(b.x, b.y, win);
+  page.drawLine({
+    start: pa,
+    end: pb,
+    thickness: opts.thickness,
+    color: opts.color,
+    dashArray: opts.dash,
+  });
+}
+
+/** 클립 사각형(인쇄영역)을 설정한다. 이후 그리기는 이 영역으로 잘린다. */
+function pushClip(page: PDFPage) {
+  const x0 = cm(MARGIN);
+  const y0 = cm(MARGIN);
+  const x1 = cm(A4W - MARGIN);
+  const y1 = cm(A4H - MARGIN);
+  page.pushOperators(
+    pushGraphicsState(),
+    moveTo(x0, y0),
+    lineTo(x1, y0),
+    lineTo(x1, y1),
+    lineTo(x0, y1),
+    closePath(),
+    clip(),
+    endPath(),
+  );
+}
+function popClip(page: PDFPage) {
+  page.pushOperators(popGraphicsState());
+}
+
+/** 속 빈 삼각형 맞춤 마크 (겹침 정렬용). 인접 타일에 동일 콘텐츠 좌표로 그려 일치시킨다. */
+function drawRegTriangle(page: PDFPage, cx: number, cy: number, win: TileWindow, dir: 'h' | 'v') {
+  const s = 0.35; // cm
+  const p = toPage(cx, cy, win);
+  const S = cm(s);
+  let tri: { x: number; y: number }[];
+  if (dir === 'h') {
+    // 오른쪽을 가리키는 삼각형
+    tri = [
+      { x: p.x - S, y: p.y - S },
+      { x: p.x - S, y: p.y + S },
+      { x: p.x + S, y: p.y },
+    ];
+  } else {
+    // 아래를 가리키는 삼각형
+    tri = [
+      { x: p.x - S, y: p.y + S },
+      { x: p.x + S, y: p.y + S },
+      { x: p.x, y: p.y - S },
+    ];
+  }
+  page.drawLine({ start: tri[0], end: tri[1], thickness: 0.8, color: FRAME });
+  page.drawLine({ start: tri[1], end: tri[2], thickness: 0.8, color: FRAME });
+  page.drawLine({ start: tri[2], end: tri[0], thickness: 0.8, color: FRAME });
+}
+
+function drawPieceInto(page: PDFPage, piece: Piece, win: TileWindow, font: PDFFont, S: Strings) {
+  // 완성선(점선)
+  const vs = vertices(piece);
+  for (let i = 0; i < vs.length; i++) {
+    drawLineCm(page, vs[i], vs[(i + 1) % vs.length], win, {
+      color: INK,
+      thickness: 0.6,
+      dash: DASH.sew,
+    });
+  }
+  // 재단선(세그먼트별)
+  const cut = cutVertices(piece);
+  for (let i = 0; i < cut.length; i++) {
+    const role: Segment['role'] = piece.segments[i].role;
+    const isFold = role === 'fold';
+    drawLineCm(page, cut[i], cut[(i + 1) % cut.length], win, {
+      color: INK,
+      thickness: isFold ? 0.9 : 1.1,
+      dash: isFold ? DASH.fold : undefined,
+    });
+  }
+  // 내부 안내선 (접는 선 등)
+  for (const g of piece.guides ?? []) {
+    drawLineCm(page, g.a, g.b, win, {
+      color: INK,
+      thickness: 0.8,
+      dash: g.role === 'fold' ? DASH.fold : DASH.sew,
+    });
+  }
+  // 조각명
+  const c = vs.reduce((a, v) => ({ x: a.x + v.x, y: a.y + v.y }), { x: 0, y: 0 });
+  const center = { x: c.x / vs.length, y: c.y / vs.length };
+  const pc = toPage(center.x, center.y, win);
+  const label = S.bodyLabel(piece.name);
+  const size = 11;
+  page.drawText(label, {
+    x: pc.x - font.widthOfTextAtSize(label, size) / 2,
+    y: pc.y,
+    size,
+    font,
+    color: INK,
+  });
+}
+
+function drawMarksInto(page: PDFPage, set: PatternSet, win: TileWindow, font: PDFFont, S: Strings) {
+  for (const m of set.marks) {
+    drawLineCm(page, { x: m.at.x, y: m.at.y - m.tick }, { x: m.at.x, y: m.at.y }, win, {
+      color: ACCENT,
+      thickness: 1.0,
+    });
+    const top = toPage(m.at.x, m.at.y - m.tick, win);
+    const size = 8;
+    page.drawText(S.strap, {
+      x: top.x - font.widthOfTextAtSize(S.strap, size) / 2,
+      y: top.y + 3,
+      size,
+      font,
+      color: ACCENT,
+    });
+  }
+}
+
+/** 인쇄영역 테두리 + 페이지 라벨. */
+function drawFrame(page: PDFPage, label: string, font: PDFFont) {
+  const x = cm(MARGIN);
+  const y = cm(MARGIN);
+  const w = cm(usableW);
+  const h = cm(usableH);
+  page.drawRectangle({ x, y, width: w, height: h, borderColor: FRAME, borderWidth: 0.5 });
+  page.drawText(label, { x: x + 4, y: y + h - 12, size: 10, font, color: FRAME });
+}
+
+/** 첫 장: 인쇄 안내 + 10cm 검증 사각형 + 범례 + 페이지맵 + 시접 안내. */
+function drawCalibrationPage(
+  page: PDFPage,
+  font: PDFFont,
+  S: Strings,
+  tiles: TileWindow[],
+) {
+  const left = cm(MARGIN + 0.5);
+  let y = cm(A4H) - cm(MARGIN + 0.5);
+
+  const line = (text: string, size: number, gap: number, color = INK) => {
+    y -= size;
+    page.drawText(text, { x: left, y, size, font, color });
+    y -= gap;
+  };
+
+  line(S.calTitle, 15, 10);
+  line(S.printNotice, 11, 18, ACCENT);
+
+  // 10cm 검증 사각형
+  const sqTop = y;
+  const sqSize = cm(10);
+  const sqY = sqTop - sqSize;
+  page.drawRectangle({
+    x: left,
+    y: sqY,
+    width: sqSize,
+    height: sqSize,
+    borderColor: INK,
+    borderWidth: 1,
+  });
+  // 내부 1cm 눈금(첫 5칸)
+  for (let i = 1; i <= 10; i++) {
+    const gx = left + cm(i);
+    page.drawLine({
+      start: { x: gx, y: sqY },
+      end: { x: gx, y: sqY + cm(0.4) },
+      thickness: 0.4,
+      color: FRAME,
+    });
+  }
+  page.drawText('10 cm', { x: left + sqSize + 8, y: sqY + sqSize / 2, size: 11, font, color: INK });
+  page.drawText(S.verify, { x: left + sqSize + 8, y: sqY + sqSize / 2 - 16, size: 9, font, color: INK });
+  // verifyNote (사각형 아래)
+  y = sqY - 16;
+  page.drawText(S.verifyNote, { x: left, y, size: 8.5, font, color: INK });
+  y -= 24;
+
+  // 범례
+  page.drawText(S.legendTitle, { x: left, y, size: 11, font, color: INK });
+  y -= 16;
+  const legendItem = (dash: number[] | undefined, text: string) => {
+    page.drawLine({
+      start: { x: left, y: y + 3 },
+      end: { x: left + cm(2), y: y + 3 },
+      thickness: 1.1,
+      color: INK,
+      dashArray: dash,
+    });
+    page.drawText(text, { x: left + cm(2) + 8, y, size: 9, font, color: INK });
+    y -= 16;
+  };
+  legendItem(undefined, S.cut);
+  legendItem(DASH.sew, S.sew);
+  legendItem(DASH.fold, S.fold);
+  y -= 8;
+
+  // 페이지 배치 맵
+  page.drawText(S.pageMap, { x: left, y, size: 11, font, color: INK });
+  y -= 14;
+  const cols = Math.max(...tiles.map((t) => t.col)) + 1;
+  const rows = Math.max(...tiles.map((t) => t.row)) + 1;
+  const cell = cm(1.2);
+  const mapTop = y;
+  for (const t of tiles) {
+    const rx = left + t.col * cell;
+    const ry = mapTop - t.row * cell - cell;
+    page.drawRectangle({ x: rx, y: ry, width: cell, height: cell, borderColor: FRAME, borderWidth: 0.5 });
+    const lbl = `${rowLetter(t.row)}${t.col + 1}`;
+    page.drawText(lbl, {
+      x: rx + cell / 2 - font.widthOfTextAtSize(lbl, 8) / 2,
+      y: ry + cell / 2 - 3,
+      size: 8,
+      font,
+      color: INK,
+    });
+  }
+  y = mapTop - rows * cell - 20;
+
+  // 시접 안내
+  page.drawText(S.seamTitle, { x: left, y, size: 11, font, color: INK });
+  y -= 15;
+  for (const t of [S.seam1, S.seam2, S.seam3]) {
+    page.drawText(t, { x: left, y, size: 9, font, color: INK });
+    y -= 14;
+  }
+  // cols 참조 (미사용 경고 방지 & 향후 확장 여지)
+  void cols;
+}
+
+export interface PdfOptions {
+  koreanFont?: ArrayBuffer; // 있으면 한글 임베드
+}
+
+/** 패턴 세트를 A4 타일 1:1 PDF (Uint8Array) 로 생성. */
+export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  let font: PDFFont;
+  let S: Strings;
+  if (opts.koreanFont) {
+    doc.registerFontkit(fontkit);
+    // subset:true 는 pdf-lib+fontkit 에서 한글(CJK) 글리프 매핑이 깨지는
+    // 알려진 문제가 있어 전체 임베드한다. 출력물이 커지지만(≈0.7MB) 정확성 우선.
+    font = await doc.embedFont(opts.koreanFont, { subset: false });
+    S = KO;
+  } else {
+    font = await doc.embedFont(StandardFonts.Helvetica);
+    S = ASCII;
+  }
+
+  const bb = contentBounds(set);
+  const boxes = set.pieces.map((p) => bounds(cutVertices(p)));
+  const tiles = computeTiles(bb, boxes);
+
+  // 첫 장: 캘리브레이션/안내
+  const cal = doc.addPage([cm(A4W), cm(A4H)]);
+  drawCalibrationPage(cal, font, S, tiles);
+
+  // 타일 페이지
+  const has = new Set(tiles.map((t) => `${t.row},${t.col}`));
+
+  for (const win of tiles) {
+    const page = doc.addPage([cm(A4W), cm(A4H)]);
+    pushClip(page);
+    for (const piece of set.pieces) drawPieceInto(page, piece, win, font, S);
+    drawMarksInto(page, set, win, font, S);
+
+    // 겹침 맞춤 삼각형: 실제로 존재하는 인접 타일 방향에만 그린다.
+    if (has.has(`${win.row},${win.col + 1}`)) {
+      const seamX = bb.minX + (win.col + 1) * strideX;
+      const yStart = Math.max(bb.minY, win.y0);
+      const yEnd = Math.min(bb.maxY, win.y0 + usableH);
+      for (let yy = yStart + 2; yy < yEnd; yy += 5) drawRegTriangle(page, seamX, yy, win, 'h');
+    }
+    if (has.has(`${win.row + 1},${win.col}`)) {
+      const seamY = bb.minY + (win.row + 1) * strideY;
+      const xStart = Math.max(bb.minX, win.x0);
+      const xEnd = Math.min(bb.maxX, win.x0 + usableW);
+      for (let xx = xStart + 2; xx < xEnd; xx += 5) drawRegTriangle(page, xx, seamY, win, 'v');
+    }
+    popClip(page);
+
+    drawFrame(page, `${rowLetter(win.row)}${win.col + 1}`, font);
+  }
+
+  return doc.save();
+}
