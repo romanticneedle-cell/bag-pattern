@@ -55,12 +55,14 @@ const pdfBtn = document.getElementById('pdf') as HTMLButtonElement;
 
 function currentParams(): ToteParams {
   const v = form.getValues();
+  const t = form.getToggles();
   return {
     x: v.x,
     y: v.y,
     z: v.z,
     strapLength: v.strapLength,
     strapWidth: v.strapWidth,
+    includeStrap: !t.excludeStrap, // '끈 안 만들기' 체크 시 제외
   };
 }
 

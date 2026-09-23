@@ -4,6 +4,7 @@ import type { ItemDef } from '../items';
 
 export interface FormHandle {
   getValues(): Record<string, number>;
+  getToggles(): Record<string, boolean>;
   isValid(): boolean;
 }
 
@@ -45,9 +46,37 @@ export function buildForm(
     inputs.set(def.key, input);
   }
 
+  // 토글(체크박스) 옵션 — 예: 끈 안 만들기
+  const toggles = new Map<string, HTMLInputElement>();
+  const toggleDefs = 'toggles' in item ? item.toggles : [];
+  for (const def of toggleDefs ?? []) {
+    const row = document.createElement('label');
+    row.className = 'toggle';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = `t-${def.key}`;
+    cb.checked = !!def.default;
+
+    const span = document.createElement('span');
+    span.textContent = def.label;
+
+    row.append(cb, span);
+    container.append(row);
+
+    cb.addEventListener('change', onChange);
+    toggles.set(def.key, cb);
+  }
+
   const getValues = (): Record<string, number> => {
     const v: Record<string, number> = {};
     for (const [k, el] of inputs) v[k] = parseFloat(el.value);
+    return v;
+  };
+
+  const getToggles = (): Record<string, boolean> => {
+    const v: Record<string, boolean> = {};
+    for (const [k, el] of toggles) v[k] = el.checked;
     return v;
   };
 
@@ -59,5 +88,5 @@ export function buildForm(
     return true;
   };
 
-  return { getValues, isValid };
+  return { getValues, getToggles, isValid };
 }

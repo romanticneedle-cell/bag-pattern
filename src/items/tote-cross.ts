@@ -12,6 +12,7 @@ export interface ToteParams {
   z: number; // 완성 바닥폭
   strapLength: number; // 끈 완성 길이
   strapWidth: number; // 끈 완성 폭
+  includeStrap?: boolean; // 끈 재단 조각 포함 여부 (기본 true)
 }
 
 // 시접 기본값 (상수로 분리 — 봉제법에 따라 변경 예정)
@@ -122,13 +123,16 @@ export function calculateStrapPattern(length: number, width: number, ox = 0, oy 
 export function buildTotePattern(p: ToteParams): PatternSet {
   const body = buildBody(p);
   const marks = buildStrapMarks(p);
+  const pieces: Piece[] = [body];
 
-  // 본체 재단선 바운딩으로 끈 배치 y 오프셋을 정한다.
-  const bb = bounds(cutVertices(body));
-  const strapY = bb.maxY + PIECE_GAP;
-  const strap = calculateStrapPattern(p.strapLength, p.strapWidth, 0, strapY);
+  // 끈 만들기(기본). '끈 안 만들기'면 끈 재단 조각을 뺀다 — 끈 위치 마크는 유지.
+  if (p.includeStrap !== false) {
+    const bb = bounds(cutVertices(body));
+    const strapY = bb.maxY + PIECE_GAP;
+    pieces.push(calculateStrapPattern(p.strapLength, p.strapWidth, 0, strapY));
+  }
 
-  return { pieces: [body, strap], marks };
+  return { pieces, marks };
 }
 
 // 아이템 메타/입력 정의 (UI 가 참조)
@@ -141,6 +145,9 @@ export const toteCrossItem = {
     { key: 'z', label: '바닥폭', unit: 'cm', default: 10 },
     { key: 'strapLength', label: '끈 길이', unit: 'cm', default: 60 },
     { key: 'strapWidth', label: '끈 폭', unit: 'cm', default: 2.5 },
+  ],
+  toggles: [
+    { key: 'excludeStrap', label: '끈 안 만들기 (기성 끈 사용)', default: false },
   ],
   build: buildTotePattern,
 } as const;
