@@ -127,3 +127,19 @@ pdfBtn.addEventListener('click', async () => {
 });
 
 update();
+
+// iframe 임베드 시: 콘텐츠 높이를 부모(아임웹)에 알려 자동 리사이즈 → 내부 스크롤 제거.
+if (window.parent !== window) {
+  const postHeight = () => {
+    const h = Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+    try {
+      window.parent.postMessage({ type: 'bag-pattern-height', height: h }, '*');
+    } catch {
+      /* cross-origin 등 무시 */
+    }
+  };
+  new ResizeObserver(postHeight).observe(document.body);
+  window.addEventListener('load', postHeight);
+  window.addEventListener('resize', postHeight);
+  postHeight();
+}
