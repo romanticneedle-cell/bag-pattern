@@ -77,6 +77,11 @@ type Strings = {
   seam1: string;
   seam2: string;
   seam3: string;
+  cutHere: string;
+  asmTitle: string;
+  asm1: string;
+  asm2: string;
+  asm3: string;
 };
 
 const KO: Strings = {
@@ -95,6 +100,11 @@ const KO: Strings = {
   seam1: '바닥 부분은 골선으로 재단하여 시접이 없습니다.',
   seam2: '그 외 부분은 기본 시접 1cm가 포함되어 있습니다.',
   seam3: '봉제 방법·소재에 따라 필요한 시접의 양은 달라질 수 있습니다.',
+  cutHere: '이 선을 자르세요',
+  asmTitle: '조립 방법 (A4)',
+  asm1: '1. 모든 장을 실제 크기(100%)로 인쇄하고, 위 검증 사각형을 자로 확인하세요.',
+  asm2: '2. 각 장의 빨간 "자르는 선"(오른쪽·아래)을 가위로 자릅니다.',
+  asm3: '3. 자른 끝을 다음 장의 테두리 선에 맞대어 올려놓고 뒤에서 테이프로 붙입니다 (A1,A2… 순).',
 };
 
 // 한글 폰트 없을 때 (WinAnsi 안전) — 조각명은 romanize
@@ -122,6 +132,11 @@ const ASCII: Strings = {
   seam1: 'The bottom edge is on the fold — no seam allowance there.',
   seam2: 'All other edges include a 1 cm seam allowance.',
   seam3: 'Required allowance may vary with sewing method and fabric.',
+  cutHere: 'cut here',
+  asmTitle: 'Assembly (A4)',
+  asm1: '1. Print all sheets at 100% (actual size); verify the square with a ruler.',
+  asm2: '2. Cut each sheet along the red "cut here" lines (right & bottom).',
+  asm3: '3. Butt the cut edge to the next sheet border and tape on the back (order A1, A2 ...).',
 };
 
 /** 콘텐츠(모든 재단선 + 마크) 바운딩 (cm). 곡선은 평탄화 후 계산. */
@@ -213,31 +228,6 @@ function popClip(page: PDFPage) {
 }
 
 /** 속 빈 삼각형 맞춤 마크 (겹침 정렬용). 인접 타일에 동일 콘텐츠 좌표로 그려 일치시킨다. */
-function drawRegTriangle(page: PDFPage, cx: number, cy: number, win: TileWindow, dir: 'h' | 'v') {
-  const s = 0.35; // cm
-  const p = toPage(cx, cy, win);
-  const S = cm(s);
-  let tri: { x: number; y: number }[];
-  if (dir === 'h') {
-    // 오른쪽을 가리키는 삼각형
-    tri = [
-      { x: p.x - S, y: p.y - S },
-      { x: p.x - S, y: p.y + S },
-      { x: p.x + S, y: p.y },
-    ];
-  } else {
-    // 아래를 가리키는 삼각형
-    tri = [
-      { x: p.x - S, y: p.y + S },
-      { x: p.x + S, y: p.y + S },
-      { x: p.x, y: p.y - S },
-    ];
-  }
-  page.drawLine({ start: tri[0], end: tri[1], thickness: 0.8, color: FRAME });
-  page.drawLine({ start: tri[1], end: tri[2], thickness: 0.8, color: FRAME });
-  page.drawLine({ start: tri[2], end: tri[0], thickness: 0.8, color: FRAME });
-}
-
 function drawPieceInto(page: PDFPage, piece: Piece, tp: ToPage, font: PDFFont, S: Strings) {
   // 완성선(점선)
   const vs = vertices(piece);
@@ -311,6 +301,43 @@ function drawMarksInto(page: PDFPage, set: PatternSet, tp: ToPage, font: PDFFont
   }
 }
 
+/**
+ * 자르는 선 (자르고 맞대어 붙이는 방식).
+ * 이웃이 있는 오른쪽/아래 변에, 인쇄영역 안쪽 10mm(겹침폭) 위치에 빨간 파선을 긋는다.
+ * 사용자는 이 선을 잘라 다음 장의 테두리 선에 맞대어 붙인다.
+ */
+function drawTrimGuides(
+  page: PDFPage,
+  hasRight: boolean,
+  hasBottom: boolean,
+  font: PDFFont,
+  S: Strings,
+) {
+  const inset = MARGIN + OVERLAP;
+  if (hasRight) {
+    const x = cm(A4W - inset);
+    page.drawLine({
+      start: { x, y: cm(MARGIN) },
+      end: { x, y: cm(A4H - MARGIN) },
+      thickness: 0.8,
+      color: ACCENT,
+      dashArray: [5, 3],
+    });
+    page.drawText(S.cutHere, { x: x - 4 - font.widthOfTextAtSize(S.cutHere, 8), y: cm(A4H - MARGIN) - 12, size: 8, font, color: ACCENT });
+  }
+  if (hasBottom) {
+    const yy = cm(inset);
+    page.drawLine({
+      start: { x: cm(MARGIN), y: yy },
+      end: { x: cm(A4W - MARGIN), y: yy },
+      thickness: 0.8,
+      color: ACCENT,
+      dashArray: [5, 3],
+    });
+    page.drawText(S.cutHere, { x: cm(MARGIN) + 4, y: yy + 3, size: 8, font, color: ACCENT });
+  }
+}
+
 /** 인쇄영역 테두리 + 페이지 라벨. */
 function drawFrame(page: PDFPage, label: string, font: PDFFont) {
   const x = cm(MARGIN);
@@ -369,7 +396,16 @@ function drawCalibrationPage(
   // verifyNote (사각형 아래)
   y = sqY - 16;
   page.drawText(S.verifyNote(calCm), { x: left, y, size: 8.5, font, color: INK });
-  y -= 24;
+  y -= 22;
+
+  // 조립 방법 (자르고 맞대어 붙이기)
+  page.drawText(S.asmTitle, { x: left, y, size: 11, font, color: INK });
+  y -= 15;
+  for (const t of [S.asm1, S.asm2, S.asm3]) {
+    page.drawText(t, { x: left, y, size: 9, font, color: INK });
+    y -= 14;
+  }
+  y -= 10;
 
   // 범례
   page.drawText(S.legendTitle, { x: left, y, size: 11, font, color: INK });
@@ -471,21 +507,12 @@ export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): P
     for (const piece of packed.pieces) drawPieceInto(page, flattenPiece(piece), tp, font, S);
     drawMarksInto(page, packed, tp, font, S);
 
-    // 겹침 맞춤 삼각형: 실제로 존재하는 인접 타일 방향에만 그린다.
-    if (has.has(`${win.row},${win.col + 1}`)) {
-      const seamX = bb.minX + (win.col + 1) * strideX;
-      const yStart = Math.max(bb.minY, win.y0);
-      const yEnd = Math.min(bb.maxY, win.y0 + usableH);
-      for (let yy = yStart + 2; yy < yEnd; yy += 5) drawRegTriangle(page, seamX, yy, win, 'h');
-    }
-    if (has.has(`${win.row + 1},${win.col}`)) {
-      const seamY = bb.minY + (win.row + 1) * strideY;
-      const xStart = Math.max(bb.minX, win.x0);
-      const xEnd = Math.min(bb.maxX, win.x0 + usableW);
-      for (let xx = xStart + 2; xx < xEnd; xx += 5) drawRegTriangle(page, xx, seamY, win, 'v');
-    }
     popClip(page);
 
+    // 자르고 맞대어 붙이는 안내선 (오른쪽/아래 이웃이 있을 때만)
+    const hasRight = has.has(`${win.row},${win.col + 1}`);
+    const hasBottom = has.has(`${win.row + 1},${win.col}`);
+    drawTrimGuides(page, hasRight, hasBottom, font, S);
     drawFrame(page, `${rowLetter(win.row)}${win.col + 1}`, font);
   }
 
