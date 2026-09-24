@@ -3,9 +3,10 @@
 
 import { toteCrossItem } from './tote-cross';
 import { bostonZipItem } from './boston-zip';
+import { roundTambourineItem } from './round-tambourine';
 
-export const items = [toteCrossItem, bostonZipItem] as const;
+export const items = [toteCrossItem, bostonZipItem, roundTambourineItem] as const;
 
 export type ItemDef = (typeof items)[number];
 
-export { toteCrossItem, bostonZipItem };
+export { toteCrossItem, bostonZipItem, roundTambourineItem };
