@@ -27,14 +27,23 @@ export type Piece = {
   guides?: Guide[]; // 내부 안내선 (선택)
 };
 
-// 끈 부착 위치 등 참고용 마크
-export type Mark = {
-  kind: 'strap';
-  at: Pt; // 마크 기준점 (완성선 위)
-  label: string;
-  // 마크 표시선 길이(cm). 화면/PDF 공용.
-  tick: number;
-};
+// 참고용 마크.
+// - strap: 끈 부착 위치 (기준점에서 위쪽으로 tick 길이의 표시선 + 라벨).
+// - notch: 조각끼리 맞물리는 정합 노치 (기준점에서 dir 방향으로 tick 길이의 짧은 눈금).
+export type Mark =
+  | {
+      kind: 'strap';
+      at: Pt; // 마크 기준점 (완성선 위)
+      label: string;
+      tick: number; // 표시선 길이(cm). 화면/PDF 공용.
+    }
+  | {
+      kind: 'notch';
+      at: Pt; // 외곽선 위 정합점
+      dir: Pt; // 눈금 방향 단위벡터(보통 조각 안쪽)
+      tick: number; // 눈금 길이(cm)
+      label?: string;
+    };
 
 // 한 아이템이 만들어내는 전체 패턴 세트
 export type PatternSet = {

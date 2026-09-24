@@ -5,7 +5,8 @@
 // 흰 배경 + 먹색 선. 끈 마크만 절제된 강조색.
 
 import type { PatternSet, Piece, Pt, Segment } from './types';
-import { bounds, cutVertices, vertices } from './allowance';
+import { bounds, cutVertices, markExtentPoints, vertices } from './allowance';
+import { flattenPiece } from './flatten';
 
 const INK = '#141414';
 const ACCENT = '#b23a2e'; // 끈 마크(주석)용 절제된 강조색
@@ -67,13 +68,10 @@ export interface SvgOptions {
 export function renderPatternSVG(set: PatternSet, opts: SvgOptions = {}): string {
   const maxWidth = opts.maxWidth ?? 560;
 
-  // 전체 콘텐츠 바운딩 (재단선 + 마크 tick 포함)
+  // 전체 콘텐츠 바운딩 (재단선 + 마크 포함). 곡선은 평탄화 후 계산.
   const allCut: Pt[] = [];
-  for (const piece of set.pieces) allCut.push(...cutVertices(piece));
-  for (const m of set.marks) {
-    allCut.push({ x: m.at.x, y: m.at.y - m.tick });
-    allCut.push({ x: m.at.x, y: m.at.y });
-  }
+  for (const piece of set.pieces) allCut.push(...cutVertices(flattenPiece(piece)));
+  for (const m of set.marks) allCut.push(...markExtentPoints(m));
   const b = bounds(allCut);
   const contentW = b.maxX - b.minX;
   const contentH = b.maxY - b.minY;
@@ -96,21 +94,23 @@ export function renderPatternSVG(set: PatternSet, opts: SvgOptions = {}): string
   parts.push(`<rect x="0" y="0" width="${fmt(width)}" height="${fmt(height)}" fill="#ffffff"/>`);
 
   for (const piece of set.pieces) {
+    // 곡선은 line-only 로 평탄화해서 완성선·재단선을 모두 폴리라인으로 그린다.
+    const fp = flattenPiece(piece);
     // 완성선(점선)
     parts.push(
-      `<path d="${completionPath(piece, tf)}" fill="none" stroke="${STROKE.sew.color}" stroke-width="${
+      `<path d="${completionPath(fp, tf)}" fill="none" stroke="${STROKE.sew.color}" stroke-width="${
         STROKE.sew.width
       }" stroke-dasharray="${STROKE.sew.dash}" />`,
     );
     // 재단선(세그먼트별 스타일)
-    for (const s of cutSegments(piece, tf)) {
+    for (const s of cutSegments(fp, tf)) {
       const st = styleFor(s.role);
       const dash = st.dash ? ` stroke-dasharray="${st.dash}"` : '';
       parts.push(
         `<path d="${s.d}" fill="none" stroke="${st.color}" stroke-width="${st.width}" stroke-linejoin="round"${dash} />`,
       );
     }
-    // 내부 안내선 (접는 선 등)
+    // 내부 안내선 (접는 선 등) — 평탄화와 무관하게 원본 guides 사용
     for (const g of piece.guides ?? []) {
       const a = tf(g.a);
       const b = tf(g.b);
@@ -120,22 +120,30 @@ export function renderPatternSVG(set: PatternSet, opts: SvgOptions = {}): string
       );
     }
     // 조각명
-    const c = tf(centroid(piece));
+    const c = tf(centroid(fp));
     parts.push(
       `<text x="${fmt(c.x)}" y="${fmt(c.y)}" font-family="sans-serif" font-size="13" fill="${INK}" text-anchor="middle" dominant-baseline="middle">${piece.name}</text>`,
     );
   }
 
-  // 끈 위치 마크
+  // 마크: 끈 위치(수직 표시선+라벨) / 정합 노치(dir 방향 짧은 눈금)
   for (const m of set.marks) {
-    const top = tf({ x: m.at.x, y: m.at.y - m.tick });
-    const bot = tf({ x: m.at.x, y: m.at.y });
-    parts.push(
-      `<line x1="${fmt(top.x)}" y1="${fmt(top.y)}" x2="${fmt(bot.x)}" y2="${fmt(bot.y)}" stroke="${ACCENT}" stroke-width="1.4" />`,
-    );
-    parts.push(
-      `<text x="${fmt(top.x)}" y="${fmt(top.y - 4)}" font-family="sans-serif" font-size="10" fill="${ACCENT}" text-anchor="middle">${m.label}</text>`,
-    );
+    if (m.kind === 'strap') {
+      const top = tf({ x: m.at.x, y: m.at.y - m.tick });
+      const bot = tf({ x: m.at.x, y: m.at.y });
+      parts.push(
+        `<line x1="${fmt(top.x)}" y1="${fmt(top.y)}" x2="${fmt(bot.x)}" y2="${fmt(bot.y)}" stroke="${ACCENT}" stroke-width="1.4" />`,
+      );
+      parts.push(
+        `<text x="${fmt(top.x)}" y="${fmt(top.y - 4)}" font-family="sans-serif" font-size="10" fill="${ACCENT}" text-anchor="middle">${m.label}</text>`,
+      );
+    } else {
+      const a = tf(m.at);
+      const b = tf({ x: m.at.x + m.dir.x * m.tick, y: m.at.y + m.dir.y * m.tick });
+      parts.push(
+        `<line x1="${fmt(a.x)}" y1="${fmt(a.y)}" x2="${fmt(b.x)}" y2="${fmt(b.y)}" stroke="${ACCENT}" stroke-width="1.4" />`,
+      );
+    }
   }
 
   parts.push('</svg>');

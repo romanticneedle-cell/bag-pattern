@@ -8,7 +8,7 @@
 // 이 방식은 볼록 코너와 오목 코너를 동일하게 정확히 처리한다.
 // (다각형 전체를 한 번에 부풀리는 오프셋은 오목 코너에서 선이 교차/반전된다.)
 
-import type { Piece, Pt, Segment } from './types';
+import type { Mark, Piece, Pt, Segment } from './types';
 
 type Vec = { x: number; y: number };
 
@@ -110,6 +110,15 @@ export function cutVertices(piece: Piece): Pt[] {
     }
   }
   return out;
+}
+
+/** 마크가 차지하는 좌표점들 (바운딩 계산용). */
+export function markExtentPoints(m: Mark): Pt[] {
+  if (m.kind === 'strap') {
+    return [{ x: m.at.x, y: m.at.y - m.tick }, m.at];
+  }
+  // notch: 기준점 ~ 눈금 끝점
+  return [m.at, { x: m.at.x + m.dir.x * m.tick, y: m.at.y + m.dir.y * m.tick }];
 }
 
 /** 축정렬 바운딩 박스 (cm). */

@@ -5,6 +5,7 @@
 
 import type { Mark, PatternSet, Piece, Segment } from '../core/types';
 import { bounds, cutVertices } from '../core/allowance';
+import { renderBagIllustration } from '../core/render-svg';
 
 export interface ToteParams {
   x: number; // 완성 가로
@@ -149,5 +150,18 @@ export const toteCrossItem = {
   toggles: [
     { key: 'excludeStrap', label: '끈 안 만들기 (기성 끈 사용)', default: false },
   ],
+  calibrationCm: 10, // 검증 사각형 10cm
+  // 폼 값·토글 → build 파라미터. '끈 안 만들기' 토글을 includeStrap 으로 변환.
+  deriveParams: (v: Record<string, number>, t: Record<string, boolean>): ToteParams => ({
+    x: v.x,
+    y: v.y,
+    z: v.z,
+    strapLength: v.strapLength,
+    strapWidth: v.strapWidth,
+    includeStrap: !t.excludeStrap,
+  }),
+  // 완성 형태 일러스트 (토트 전용).
+  illustration: (p: ToteParams): string =>
+    renderBagIllustration({ x: p.x, y: p.y, z: p.z, strapLength: p.strapLength }),
   build: buildTotePattern,
 } as const;

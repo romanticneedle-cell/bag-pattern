@@ -57,6 +57,33 @@ header p {
   padding: 18px;
 }
 
+.kind {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.kind label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.kind select {
+  width: 100%;
+  padding: 9px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 14px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+.kind select:focus {
+  outline: 2px solid #cbd5e1;
+  border-color: #94a3b8;
+}
+
 .field {
   display: grid;
   grid-template-columns: 1fr 86px;

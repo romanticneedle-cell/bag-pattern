@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
 import { buildPatternPdf, PT_PER_CM } from './pdf';
 import { buildTotePattern } from '../items/tote-cross';
+import { buildBostonPattern } from '../items/boston-zip';
 
 const params = { x: 30, y: 35, z: 10, strapLength: 60, strapWidth: 2.5 };
 
@@ -41,5 +42,21 @@ describe('buildPatternPdf', () => {
     const bytes = await buildPatternPdf(set, { koreanFont: ab });
     expect(bytes.length).toBeGreaterThan(1000);
     expect(String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])).toBe('%PDF');
+  });
+
+  it('보스턴백(곡선+노치+검증5cm)도 유효한 PDF 로 생성된다', async () => {
+    const set = buildBostonPattern({ W: 300, H: 200, rt: 40, rb: 60, z: 100, zipPct: 40 });
+    // ASCII 폴백 경로(한글 폰트 없음)에서도 조각명/라벨이 WinAnsi 로 안전해야 한다.
+    const ascii = await buildPatternPdf(set, { calibrationCm: 5 });
+    expect(ascii.length).toBeGreaterThan(1000);
+    expect(String.fromCharCode(ascii[0], ascii[1], ascii[2], ascii[3])).toBe('%PDF');
+
+    // 한글 폰트 임베드 경로
+    const fontPath = fileURLToPath(new URL('../../public/fonts/NanumGothic-Regular.ttf', import.meta.url));
+    const font = readFileSync(fontPath);
+    const ab = font.buffer.slice(font.byteOffset, font.byteOffset + font.byteLength);
+    const ko = await buildPatternPdf(set, { koreanFont: ab, calibrationCm: 5 });
+    expect(ko.length).toBeGreaterThan(1000);
+    expect(String.fromCharCode(ko[0], ko[1], ko[2], ko[3])).toBe('%PDF');
   });
 });

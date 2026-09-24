@@ -1,8 +1,8 @@
 import './style.css';
-import { toteCrossItem } from './items';
-import { buildForm } from './ui/form';
+import { items, type ItemDef } from './items';
+import { buildForm, type FormHandle } from './ui/form';
 import { renderPreview } from './ui/preview';
-import type { ToteParams } from './items/tote-cross';
+import type { PatternSet } from './core/types';
 
 const app = document.getElementById('app')!;
 
@@ -10,18 +10,22 @@ app.innerHTML = `
   <div class="wrap">
     <header>
       <h1>낭만바늘 가방 패턴 생성기</h1>
-      <p>${toteCrossItem.name} · 완성 치수를 입력하면 1:1 실치수 재단 도안을 만듭니다.</p>
+      <p id="subtitle"></p>
     </header>
     <div class="layout">
       <div>
         <div class="panel">
+          <div class="kind">
+            <label for="item-kind">가방 종류</label>
+            <select id="item-kind"></select>
+          </div>
           <div id="form"></div>
           <button id="pdf" class="primary">A4 분할 PDF 다운로드</button>
           <div id="status" class="status"></div>
         </div>
         <div class="notice">
           <strong>시접 안내</strong>
-          <p>바닥 부분은 골선으로 재단하여 시접이 없습니다.</p>
+          <p>바닥/골선 부분은 시접이 없습니다.</p>
           <p>그 외 부분은 기본 시접 1cm가 포함되어 있습니다.</p>
           <p>봉제 방법이나 사용하는 소재에 따라 필요한 시접의 양은 달라질 수 있습니다.</p>
         </div>
@@ -37,7 +41,7 @@ app.innerHTML = `
               <span><i class="fold"></i> 골선</span>
             </div>
           </div>
-          <div>
+          <div data-illo-col>
             <p class="section-label">완성 형태</p>
             <div id="illo" class="preview-box"></div>
           </div>
@@ -47,23 +51,41 @@ app.innerHTML = `
   </div>
 `;
 
+const kindEl = document.getElementById('item-kind') as HTMLSelectElement;
+const subtitleEl = document.getElementById('subtitle')!;
 const formEl = document.getElementById('form')!;
 const patternEl = document.getElementById('pattern')!;
 const illoEl = document.getElementById('illo')!;
 const statusEl = document.getElementById('status')!;
 const pdfBtn = document.getElementById('pdf') as HTMLButtonElement;
 
-function currentParams(): ToteParams {
-  const v = form.getValues();
-  const t = form.getToggles();
-  return {
-    x: v.x,
-    y: v.y,
-    z: v.z,
-    strapLength: v.strapLength,
-    strapWidth: v.strapWidth,
-    includeStrap: !t.excludeStrap, // '끈 안 만들기' 체크 시 제외
-  };
+// 가방 종류 옵션 채우기
+for (const it of items) {
+  const opt = document.createElement('option');
+  opt.value = it.id;
+  opt.textContent = it.name;
+  kindEl.append(opt);
+}
+
+let currentItem: ItemDef = items[0];
+let form: FormHandle;
+
+// 아이템별로 폼 값·토글을 build 파라미터로 변환한다.
+// deriveParams 가 있으면 사용(토트의 '끈 안 만들기' 등), 없으면 숫자 값을 그대로 쓴다.
+function deriveParams(item: ItemDef): Record<string, number> {
+  const values = form.getValues();
+  const toggles = form.getToggles();
+  const dp = (item as {
+    deriveParams?: (v: Record<string, number>, t: Record<string, boolean>) => Record<string, number>;
+  }).deriveParams;
+  return dp ? dp(values, toggles) : values;
+}
+
+// 선택된 아이템으로 폼을 다시 만들고 부제/일러스트를 갱신한다.
+function rebuildForm() {
+  formEl.innerHTML = '';
+  form = buildForm(formEl, currentItem, update);
+  subtitleEl.textContent = `${currentItem.name} · 완성 치수를 입력하면 1:1 실치수 재단 도안을 만듭니다.`;
 }
 
 function update() {
@@ -76,10 +98,17 @@ function update() {
   statusEl.textContent = '';
   statusEl.classList.remove('err');
   pdfBtn.disabled = false;
-  renderPreview(patternEl, illoEl, currentParams());
+  renderPreview(patternEl, illoEl, currentItem, deriveParams(currentItem));
 }
 
-const form = buildForm(formEl, toteCrossItem, update);
+kindEl.addEventListener('change', () => {
+  const found = items.find((i) => i.id === kindEl.value);
+  if (found) currentItem = found;
+  rebuildForm();
+  update();
+});
+
+rebuildForm();
 
 // 한글 폰트는 최초 PDF 생성 시 1회만 로드해 캐시한다.
 let fontPromise: Promise<ArrayBuffer | undefined> | null = null;
@@ -99,19 +128,21 @@ pdfBtn.addEventListener('click', async () => {
   statusEl.classList.remove('err');
   statusEl.textContent = 'PDF 생성 중…';
   try {
-    const params = currentParams();
-    const set = toteCrossItem.build(params);
+    const params = deriveParams(currentItem);
+    const set: PatternSet = (currentItem.build as (p: unknown) => PatternSet)(params);
     // pdf-lib/fontkit 은 무거우므로 클릭 시 지연 로드한다.
     const [{ buildPatternPdf }, koreanFont] = await Promise.all([
       import('./core/pdf'),
       loadKoreanFont(),
     ]);
-    const bytes = await buildPatternPdf(set, { koreanFont });
+    const calibrationCm = (currentItem as { calibrationCm?: number }).calibrationCm;
+    const bytes = await buildPatternPdf(set, { koreanFont, calibrationCm });
     const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `가방패턴_${params.x}x${params.y}x${params.z}.pdf`;
+    const dims = Object.values(form.getValues()).slice(0, 3).join('x');
+    a.download = `가방패턴_${currentItem.id}_${dims}.pdf`;
     document.body.append(a);
     a.click();
     a.remove();
