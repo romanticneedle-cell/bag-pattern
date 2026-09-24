@@ -30,7 +30,8 @@ export const PT_PER_CM = 28.3465; // 1cm = 28.3465pt
 const A4W = 21.0; // cm
 const A4H = 29.7; // cm
 const MARGIN = 1.0; // cm (10mm)
-const OVERLAP = 1.0; // cm (10mm)
+// 겹침 없음: 각 장을 인쇄영역 테두리(바깥 선)를 따라 잘라 옆 장과 맞대어 붙인다.
+const OVERLAP = 0; // cm
 
 // A1 롤: 가로 610mm 고정, 세로는 내용 길이(가변).
 const ROLL_W = 61.0; // cm (610mm)
@@ -100,11 +101,11 @@ const KO: Strings = {
   seam1: '바닥 부분은 골선으로 재단하여 시접이 없습니다.',
   seam2: '그 외 부분은 기본 시접 1cm가 포함되어 있습니다.',
   seam3: '봉제 방법·소재에 따라 필요한 시접의 양은 달라질 수 있습니다.',
-  cutHere: '이 선을 자르세요',
+  cutHere: '자르는 선',
   asmTitle: '조립 방법 (A4)',
   asm1: '1. 모든 장을 실제 크기(100%)로 인쇄하고, 위 검증 사각형을 자로 확인하세요.',
-  asm2: '2. 각 장의 빨간 "자르는 선"(오른쪽·아래)을 가위로 자릅니다.',
-  asm3: '3. 자른 끝을 다음 장의 테두리 선에 맞대어 올려놓고 뒤에서 테이프로 붙입니다 (A1,A2… 순).',
+  asm2: '2. 각 장을 바깥 테두리 선을 따라 사방으로 자릅니다.',
+  asm3: '3. 페이지 배치(A1,A2… 순)대로 옆 장과 테두리를 맞대어 놓고 뒤에서 테이프로 붙입니다.',
 };
 
 // 한글 폰트 없을 때 (WinAnsi 안전) — 조각명은 romanize
@@ -132,11 +133,11 @@ const ASCII: Strings = {
   seam1: 'The bottom edge is on the fold — no seam allowance there.',
   seam2: 'All other edges include a 1 cm seam allowance.',
   seam3: 'Required allowance may vary with sewing method and fabric.',
-  cutHere: 'cut here',
+  cutHere: 'cut line',
   asmTitle: 'Assembly (A4)',
   asm1: '1. Print all sheets at 100% (actual size); verify the square with a ruler.',
-  asm2: '2. Cut each sheet along the red "cut here" lines (right & bottom).',
-  asm3: '3. Butt the cut edge to the next sheet border and tape on the back (order A1, A2 ...).',
+  asm2: '2. Cut each sheet along the outer border line on all sides.',
+  asm3: '3. Butt sheets edge to edge in order (A1, A2 ...) and tape on the back.',
 };
 
 /** 콘텐츠(모든 재단선 + 마크) 바운딩 (cm). 곡선은 평탄화 후 계산. */
@@ -301,50 +302,13 @@ function drawMarksInto(page: PDFPage, set: PatternSet, tp: ToPage, font: PDFFont
   }
 }
 
-/**
- * 자르는 선 (자르고 맞대어 붙이는 방식).
- * 이웃이 있는 오른쪽/아래 변에, 인쇄영역 안쪽 10mm(겹침폭) 위치에 빨간 파선을 긋는다.
- * 사용자는 이 선을 잘라 다음 장의 테두리 선에 맞대어 붙인다.
- */
-function drawTrimGuides(
-  page: PDFPage,
-  hasRight: boolean,
-  hasBottom: boolean,
-  font: PDFFont,
-  S: Strings,
-) {
-  const inset = MARGIN + OVERLAP;
-  if (hasRight) {
-    const x = cm(A4W - inset);
-    page.drawLine({
-      start: { x, y: cm(MARGIN) },
-      end: { x, y: cm(A4H - MARGIN) },
-      thickness: 0.8,
-      color: ACCENT,
-      dashArray: [5, 3],
-    });
-    page.drawText(S.cutHere, { x: x - 4 - font.widthOfTextAtSize(S.cutHere, 8), y: cm(A4H - MARGIN) - 12, size: 8, font, color: ACCENT });
-  }
-  if (hasBottom) {
-    const yy = cm(inset);
-    page.drawLine({
-      start: { x: cm(MARGIN), y: yy },
-      end: { x: cm(A4W - MARGIN), y: yy },
-      thickness: 0.8,
-      color: ACCENT,
-      dashArray: [5, 3],
-    });
-    page.drawText(S.cutHere, { x: cm(MARGIN) + 4, y: yy + 3, size: 8, font, color: ACCENT });
-  }
-}
-
-/** 인쇄영역 테두리 + 페이지 라벨. */
+/** 인쇄영역 테두리(=자르는 선) + 페이지 라벨. 테두리를 따라 잘라 옆 장과 맞댄다. */
 function drawFrame(page: PDFPage, label: string, font: PDFFont) {
   const x = cm(MARGIN);
   const y = cm(MARGIN);
   const w = cm(usableW);
   const h = cm(usableH);
-  page.drawRectangle({ x, y, width: w, height: h, borderColor: FRAME, borderWidth: 0.5 });
+  page.drawRectangle({ x, y, width: w, height: h, borderColor: INK, borderWidth: 0.8 });
   page.drawText(label, { x: x + 4, y: y + h - 12, size: 10, font, color: FRAME });
 }
 
@@ -497,8 +461,6 @@ export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): P
   drawCalibrationPage(cal, font, S, tiles, opts.calibrationCm ?? 10);
 
   // 타일 페이지
-  const has = new Set(tiles.map((t) => `${t.row},${t.col}`));
-
   for (const win of tiles) {
     const page = doc.addPage([cm(A4W), cm(A4H)]);
     const tp: ToPage = (cx, cy) => toPage(cx, cy, win);
@@ -506,13 +468,9 @@ export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): P
     // 곡선은 평탄화(line-only)해서 완성선·재단선을 폴리라인으로 그린다.
     for (const piece of packed.pieces) drawPieceInto(page, flattenPiece(piece), tp, font, S);
     drawMarksInto(page, packed, tp, font, S);
-
     popClip(page);
 
-    // 자르고 맞대어 붙이는 안내선 (오른쪽/아래 이웃이 있을 때만)
-    const hasRight = has.has(`${win.row},${win.col + 1}`);
-    const hasBottom = has.has(`${win.row + 1},${win.col}`);
-    drawTrimGuides(page, hasRight, hasBottom, font, S);
+    // 인쇄영역 테두리(=자르는 선). 테두리를 잘라 옆 장과 맞대어 붙인다.
     drawFrame(page, `${rowLetter(win.row)}${win.col + 1}`, font);
   }
 
