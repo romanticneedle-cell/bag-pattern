@@ -44,8 +44,16 @@ describe('buildPatternPdf', () => {
     expect(String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])).toBe('%PDF');
   });
 
-  it('보스턴백(곡선+노치+검증5cm)도 유효한 PDF 로 생성된다', async () => {
-    const set = buildBostonPattern({ W: 300, H: 200, rt: 40, rb: 60, z: 100, zipPct: 40 });
+  it('보스턴백(사다리꼴 곡선+노치+검증5cm)도 유효한 PDF 로 생성된다', async () => {
+    const set = buildBostonPattern({
+      topW: 260,
+      bottomW: 320,
+      H: 200,
+      rt: 40,
+      rb: 60,
+      z: 100,
+      zipPct: 40,
+    });
     // ASCII 폴백 경로(한글 폰트 없음)에서도 조각명/라벨이 WinAnsi 로 안전해야 한다.
     const ascii = await buildPatternPdf(set, { calibrationCm: 5 });
     expect(ascii.length).toBeGreaterThan(1000);
