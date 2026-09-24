@@ -20,7 +20,14 @@ app.innerHTML = `
             <select id="item-kind"></select>
           </div>
           <div id="form"></div>
-          <button id="pdf" class="primary">A4 분할 PDF 다운로드</button>
+          <div class="paper">
+            <label for="paper-format">용지</label>
+            <select id="paper-format">
+              <option value="a4">A4 분할</option>
+              <option value="a1roll">A1 롤 (610mm)</option>
+            </select>
+          </div>
+          <button id="pdf" class="primary">PDF 다운로드</button>
           <div id="status" class="status"></div>
         </div>
         <div class="notice">
@@ -57,6 +64,7 @@ const formEl = document.getElementById('form')!;
 const patternEl = document.getElementById('pattern')!;
 const illoEl = document.getElementById('illo')!;
 const statusEl = document.getElementById('status')!;
+const paperEl = document.getElementById('paper-format') as HTMLSelectElement;
 const pdfBtn = document.getElementById('pdf') as HTMLButtonElement;
 
 // 가방 종류 옵션 채우기
@@ -131,18 +139,18 @@ pdfBtn.addEventListener('click', async () => {
     const params = deriveParams(currentItem);
     const set: PatternSet = (currentItem.build as (p: unknown) => PatternSet)(params);
     // pdf-lib/fontkit 은 무거우므로 클릭 시 지연 로드한다.
-    const [{ buildPatternPdf }, koreanFont] = await Promise.all([
-      import('./core/pdf'),
-      loadKoreanFont(),
-    ]);
+    const [pdf, koreanFont] = await Promise.all([import('./core/pdf'), loadKoreanFont()]);
     const calibrationCm = (currentItem as { calibrationCm?: number }).calibrationCm;
-    const bytes = await buildPatternPdf(set, { koreanFont, calibrationCm });
+    const isRoll = paperEl.value === 'a1roll';
+    const bytes = isRoll
+      ? await pdf.buildRollPdf(set, { koreanFont, calibrationCm })
+      : await pdf.buildPatternPdf(set, { koreanFont, calibrationCm });
     const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     const dims = Object.values(form.getValues()).slice(0, 3).join('x');
-    a.download = `가방패턴_${currentItem.id}_${dims}.pdf`;
+    a.download = `가방패턴_${currentItem.id}_${dims}_${isRoll ? 'A1roll' : 'A4'}.pdf`;
     document.body.append(a);
     a.click();
     a.remove();

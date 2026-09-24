@@ -24,12 +24,20 @@ import fontkit from '@pdf-lib/fontkit';
 import type { PatternSet, Piece, Pt, Segment } from './types';
 import { bounds, cutVertices, markExtentPoints, vertices } from './allowance';
 import { flattenPiece } from './flatten';
+import { packPatternSet } from './layout';
 
 export const PT_PER_CM = 28.3465; // 1cm = 28.3465pt
 const A4W = 21.0; // cm
 const A4H = 29.7; // cm
 const MARGIN = 1.0; // cm (10mm)
 const OVERLAP = 1.0; // cm (10mm)
+
+// A1 롤: 가로 610mm 고정, 세로는 내용 길이(가변).
+const ROLL_W = 61.0; // cm (610mm)
+const ROLL_USABLE = ROLL_W - 2 * MARGIN; // 59cm
+
+/** 콘텐츠 cm 좌표 → 페이지 pt 좌표 변환기 (타일/롤 공용). */
+type ToPage = (cx: number, cy: number) => { x: number; y: number };
 
 const INK = rgb(0.08, 0.08, 0.08);
 const ACCENT = rgb(0.7, 0.23, 0.18);
@@ -169,11 +177,11 @@ function drawLineCm(
   page: PDFPage,
   a: Pt,
   b: Pt,
-  win: TileWindow,
+  tp: ToPage,
   opts: { color: any; thickness: number; dash?: number[] },
 ) {
-  const pa = toPage(a.x, a.y, win);
-  const pb = toPage(b.x, b.y, win);
+  const pa = tp(a.x, a.y);
+  const pb = tp(b.x, b.y);
   page.drawLine({
     start: pa,
     end: pb,
@@ -230,11 +238,11 @@ function drawRegTriangle(page: PDFPage, cx: number, cy: number, win: TileWindow,
   page.drawLine({ start: tri[2], end: tri[0], thickness: 0.8, color: FRAME });
 }
 
-function drawPieceInto(page: PDFPage, piece: Piece, win: TileWindow, font: PDFFont, S: Strings) {
+function drawPieceInto(page: PDFPage, piece: Piece, tp: ToPage, font: PDFFont, S: Strings) {
   // 완성선(점선)
   const vs = vertices(piece);
   for (let i = 0; i < vs.length; i++) {
-    drawLineCm(page, vs[i], vs[(i + 1) % vs.length], win, {
+    drawLineCm(page, vs[i], vs[(i + 1) % vs.length], tp, {
       color: INK,
       thickness: 0.6,
       dash: DASH.sew,
@@ -245,7 +253,7 @@ function drawPieceInto(page: PDFPage, piece: Piece, win: TileWindow, font: PDFFo
   for (let i = 0; i < cut.length; i++) {
     const role: Segment['role'] = piece.segments[i].role;
     const isFold = role === 'fold';
-    drawLineCm(page, cut[i], cut[(i + 1) % cut.length], win, {
+    drawLineCm(page, cut[i], cut[(i + 1) % cut.length], tp, {
       color: INK,
       thickness: isFold ? 0.9 : 1.1,
       dash: isFold ? DASH.fold : undefined,
@@ -253,7 +261,7 @@ function drawPieceInto(page: PDFPage, piece: Piece, win: TileWindow, font: PDFFo
   }
   // 내부 안내선 (접는 선 등)
   for (const g of piece.guides ?? []) {
-    drawLineCm(page, g.a, g.b, win, {
+    drawLineCm(page, g.a, g.b, tp, {
       color: INK,
       thickness: 0.8,
       dash: g.role === 'fold' ? DASH.fold : DASH.sew,
@@ -262,7 +270,7 @@ function drawPieceInto(page: PDFPage, piece: Piece, win: TileWindow, font: PDFFo
   // 조각명
   const c = vs.reduce((a, v) => ({ x: a.x + v.x, y: a.y + v.y }), { x: 0, y: 0 });
   const center = { x: c.x / vs.length, y: c.y / vs.length };
-  const pc = toPage(center.x, center.y, win);
+  const pc = tp(center.x, center.y);
   const label = S.bodyLabel(piece.name);
   const size = 11;
   page.drawText(label, {
@@ -274,14 +282,14 @@ function drawPieceInto(page: PDFPage, piece: Piece, win: TileWindow, font: PDFFo
   });
 }
 
-function drawMarksInto(page: PDFPage, set: PatternSet, win: TileWindow, font: PDFFont, S: Strings) {
+function drawMarksInto(page: PDFPage, set: PatternSet, tp: ToPage, font: PDFFont, S: Strings) {
   for (const m of set.marks) {
     if (m.kind === 'strap') {
-      drawLineCm(page, { x: m.at.x, y: m.at.y - m.tick }, { x: m.at.x, y: m.at.y }, win, {
+      drawLineCm(page, { x: m.at.x, y: m.at.y - m.tick }, { x: m.at.x, y: m.at.y }, tp, {
         color: ACCENT,
         thickness: 1.0,
       });
-      const top = toPage(m.at.x, m.at.y - m.tick, win);
+      const top = tp(m.at.x, m.at.y - m.tick);
       const size = 8;
       page.drawText(S.strap, {
         x: top.x - font.widthOfTextAtSize(S.strap, size) / 2,
@@ -296,7 +304,7 @@ function drawMarksInto(page: PDFPage, set: PatternSet, win: TileWindow, font: PD
         page,
         m.at,
         { x: m.at.x + m.dir.x * m.tick, y: m.at.y + m.dir.y * m.tick },
-        win,
+        tp,
         { color: ACCENT, thickness: 1.0 },
       );
     }
@@ -420,24 +428,32 @@ export interface PdfOptions {
   calibrationCm?: number; // 검증 사각형 한 변(cm). 기본 10. (예: 보스턴백=5)
 }
 
-/** 패턴 세트를 A4 타일 1:1 PDF (Uint8Array) 로 생성. */
-export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): Promise<Uint8Array> {
-  const doc = await PDFDocument.create();
-  let font: PDFFont;
-  let S: Strings;
+/** 문서에 폰트를 임베드하고 (한글/ASCII) 문자열 테이블을 고른다. */
+async function embedFont(doc: PDFDocument, opts: PdfOptions): Promise<{ font: PDFFont; S: Strings }> {
   if (opts.koreanFont) {
     doc.registerFontkit(fontkit);
     // subset:true 는 pdf-lib+fontkit 에서 한글(CJK) 글리프 매핑이 깨지는
     // 알려진 문제가 있어 전체 임베드한다. 출력물이 커지지만(≈0.7MB) 정확성 우선.
-    font = await doc.embedFont(opts.koreanFont, { subset: false });
-    S = KO;
-  } else {
-    font = await doc.embedFont(StandardFonts.Helvetica);
-    S = ASCII;
+    const font = await doc.embedFont(opts.koreanFont, { subset: false });
+    return { font, S: KO };
   }
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  return { font, S: ASCII };
+}
 
-  const bb = contentBounds(set);
-  const boxes = set.pieces.map((p) => bounds(cutVertices(flattenPiece(p))));
+/**
+ * 패턴 세트를 A4 타일 1:1 PDF (Uint8Array) 로 생성.
+ * 조각들을 인쇄영역 폭(usableW)으로 패킹해 빈 타일을 줄인다.
+ */
+export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const { font, S } = await embedFont(doc, opts);
+
+  // 용지 절약 패킹 (인쇄영역 폭 기준). 페이지보다 큰 조각은 그대로 타일 분할된다.
+  const packed = packPatternSet(set, { maxWidthCm: usableW, gap: 1, allowRotate: true });
+
+  const bb = contentBounds(packed);
+  const boxes = packed.pieces.map((p) => bounds(cutVertices(flattenPiece(p))));
   const tiles = computeTiles(bb, boxes);
 
   // 첫 장: 캘리브레이션/안내
@@ -449,10 +465,11 @@ export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): P
 
   for (const win of tiles) {
     const page = doc.addPage([cm(A4W), cm(A4H)]);
+    const tp: ToPage = (cx, cy) => toPage(cx, cy, win);
     pushClip(page);
     // 곡선은 평탄화(line-only)해서 완성선·재단선을 폴리라인으로 그린다.
-    for (const piece of set.pieces) drawPieceInto(page, flattenPiece(piece), win, font, S);
-    drawMarksInto(page, set, win, font, S);
+    for (const piece of packed.pieces) drawPieceInto(page, flattenPiece(piece), tp, font, S);
+    drawMarksInto(page, packed, tp, font, S);
 
     // 겹침 맞춤 삼각형: 실제로 존재하는 인접 타일 방향에만 그린다.
     if (has.has(`${win.row},${win.col + 1}`)) {
@@ -471,6 +488,70 @@ export async function buildPatternPdf(set: PatternSet, opts: PdfOptions = {}): P
 
     drawFrame(page, `${rowLetter(win.row)}${win.col + 1}`, font);
   }
+
+  return doc.save();
+}
+
+/** 롤 페이지 상단 헤더: 제목 + 인쇄 안내 + N cm 검증 사각형 (같은 페이지 위쪽). */
+function drawRollHeader(
+  page: PDFPage,
+  font: PDFFont,
+  S: Strings,
+  calCm: number,
+  pageH: number,
+) {
+  const left = cm(MARGIN + 0.5);
+  let y = cm(pageH) - cm(MARGIN + 0.5);
+
+  y -= 14;
+  page.drawText(S.calTitle, { x: left, y, size: 14, font, color: INK });
+  y -= 6;
+  y -= 11;
+  page.drawText(S.printNotice, { x: left, y, size: 11, font, color: ACCENT });
+  y -= 12;
+
+  // N cm 검증 사각형
+  const sqSize = cm(calCm);
+  const sqY = y - sqSize;
+  page.drawRectangle({ x: left, y: sqY, width: sqSize, height: sqSize, borderColor: INK, borderWidth: 1 });
+  for (let i = 1; i <= Math.round(calCm); i++) {
+    const gx = left + cm(i);
+    page.drawLine({ start: { x: gx, y: sqY }, end: { x: gx, y: sqY + cm(0.4) }, thickness: 0.4, color: FRAME });
+  }
+  page.drawText(`${calCm} cm`, { x: left + sqSize + 8, y: sqY + sqSize / 2, size: 11, font, color: INK });
+  page.drawText(S.verify(calCm), { x: left + sqSize + 8, y: sqY + sqSize / 2 - 16, size: 9, font, color: INK });
+}
+
+/**
+ * 패턴 세트를 A1 롤 1:1 PDF 로 생성.
+ * 가로 610mm 고정, 세로는 내용 길이(가변). 타일 분할 없음(롤 연속 출력).
+ * 인쇄영역 폭(59cm)으로 패킹해 용지를 절약한다.
+ */
+export async function buildRollPdf(set: PatternSet, opts: PdfOptions = {}): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const { font, S } = await embedFont(doc, opts);
+  const calCm = opts.calibrationCm ?? 10;
+
+  const packed = packPatternSet(set, { maxWidthCm: ROLL_USABLE, gap: 1, allowRotate: true });
+  const bb = contentBounds(packed);
+  const contentH = bb.maxY - bb.minY;
+
+  // 상단 헤더 높이(cm): 제목/안내 + 검증 사각형 + 여유.
+  const headerH = calCm + 3.5;
+  const pageH = 2 * MARGIN + headerH + contentH;
+
+  const page = doc.addPage([cm(ROLL_W), cm(pageH)]);
+  drawRollHeader(page, font, S, calCm, pageH);
+
+  // 콘텐츠는 헤더 아래부터. (cx,cy)[cm] → 페이지 pt (y 위로).
+  const tp: ToPage = (cx, cy) => {
+    const xCm = MARGIN + (cx - bb.minX);
+    const yTopDown = MARGIN + headerH + (cy - bb.minY);
+    return { x: cm(xCm), y: cm(pageH - yTopDown) };
+  };
+
+  for (const piece of packed.pieces) drawPieceInto(page, flattenPiece(piece), tp, font, S);
+  drawMarksInto(page, packed, tp, font, S);
 
   return doc.save();
 }

@@ -133,6 +133,28 @@ header p {
   cursor: pointer;
 }
 
+.paper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+.paper label {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.paper select {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 14px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
 button.primary {
   width: 100%;
   margin-top: 6px;
