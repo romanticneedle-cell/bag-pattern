@@ -83,7 +83,7 @@ let form: FormHandle;
 function deriveParams(item: ItemDef): Record<string, number> {
   const values = form.getValues();
   const toggles = form.getToggles();
-  const dp = (item as {
+  const dp = (item as unknown as {
     deriveParams?: (v: Record<string, number>, t: Record<string, boolean>) => Record<string, number>;
   }).deriveParams;
   return dp ? dp(values, toggles) : values;

@@ -31,6 +31,7 @@ export interface BostonParams {
 }
 
 // 고정 상수 (cm)
+const R_EPS = 1e-6; // 이보다 작은 반지름은 '각진 코너'로 처리
 const SEAM = 1.0; // 시접 10mm
 const ZIPPER = 1.0; // 지퍼 두께 10mm
 const NOTCH = 0.5; // 정합 노치 눈금 길이(cm)
@@ -234,8 +235,13 @@ export function buildPanel(
 
   const segments: Segment[] = [];
   // 시계방향으로 다음 코너부터: 그 코너의 P1 까지 직선 → 코너 호(P1→P2)
+  // r≈0(각진 코너)이면 꼭짓점까지 직선만 긋고 호는 생략한다(퇴화 곡선 방지).
   for (const idx of [1, 2, 3, 0]) {
     const c = geom.corners[idx];
+    if (c.r < R_EPS) {
+      segments.push({ kind: 'line', to: off(c.V), allowance: SEAM, role: 'cut' });
+      continue;
+    }
     segments.push({ kind: 'line', to: off(c.P1), allowance: SEAM, role: 'cut' });
     for (const b of arcToBeziers(c.P1, c.P2, c.C, c.r)) {
       segments.push({
@@ -341,10 +347,14 @@ export function buildBostonPattern(pmm: BostonParams): PatternSet {
   if (nR.x > 0) nR = { x: -nR.x, y: -nR.y }; // 안쪽(−x) 향하도록
   pushPanel(zip.boundaryRight, nR);
   pushPanel(zip.boundaryLeft, { x: -nR.x, y: nR.y });
-  // 각 코너 필렛의 시작·끝 접점 8개 — 반지름 방향(중심 C 쪽)이 곧 외곽선 수직 안쪽
+  // 코너 노치: 둥근 코너는 필렛 시작·끝 접점 2개(반지름 방향), 각진 코너는 꼭짓점 1개(이등분선 안쪽)
   for (const c of geom.corners) {
-    pushPanel(c.P1, sub(c.C, c.P1));
-    pushPanel(c.P2, sub(c.C, c.P2));
+    if (c.r < R_EPS) {
+      pushPanel(c.V, norm(add(c.u, c.w)));
+    } else {
+      pushPanel(c.P1, sub(c.C, c.P1));
+      pushPanel(c.P2, sub(c.C, c.P2));
+    }
   }
   for (const pn of panelNotches) {
     marks.push({ kind: 'notch', at: pn.at, dir: pn.dir, tick: NOTCH });
@@ -399,6 +409,17 @@ export const bostonZipItem = {
     { key: 'z', label: '바닥두께', unit: 'mm', default: 100 },
     { key: 'zipPct', label: '지퍼구간(세로%)', unit: '%', default: 40 },
   ],
+  toggles: [{ key: 'sharpCorners', label: '모서리 각지게 (안 둥글림)', default: false }],
   calibrationCm: 5, // 검증 사각형 5cm
+  // 폼 값·토글 → build 파라미터. '모서리 각지게' 체크 시 위/아래 R 을 0 으로.
+  deriveParams: (v: Record<string, number>, t: Record<string, boolean>): BostonParams => ({
+    topW: v.topW,
+    bottomW: v.bottomW,
+    H: v.H,
+    rt: t.sharpCorners ? 0 : v.rt,
+    rb: t.sharpCorners ? 0 : v.rb,
+    z: v.z,
+    zipPct: v.zipPct,
+  }),
   build: buildBostonPattern,
 } as const;
