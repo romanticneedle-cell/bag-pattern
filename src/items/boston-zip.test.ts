@@ -156,3 +156,64 @@ describe('boston 검증식 & 패턴 세트 (사다리꼴 기본값)', () => {
     expect(b2.minY).toBeGreaterThan(b1.maxY);
   });
 });
+
+// ── 원(circle) 모양: 앞뒤판이 원 (탬버린 로직 흡수) ──
+describe('boston-zip 원(circle) 경로', () => {
+  const set = buildBostonPattern({ shape: 'circle', D: 250, z: 100, zipPct: 40 });
+
+  it('조각 3개: 앞뒤판(원) / 옆면~바닥판 / 지퍼단', () => {
+    expect(set.pieces).toHaveLength(3);
+    expect(set.pieces[0].name).toContain('앞뒤판');
+    expect(set.pieces[1].name).toContain('옆면');
+    expect(set.pieces[2].name).toContain('지퍼단');
+  });
+
+  it('앞뒤판은 곡선만(원) — line 세그먼트 없음', () => {
+    expect(set.pieces[0].segments.every((s) => s.kind === 'curve')).toBe(true);
+  });
+
+  it('옆면 가로 + 지퍼단 가로 = 원둘레 πD (=π·25cm)', () => {
+    const sideW = (() => {
+      const b = bounds(vertices(flattenPiece(set.pieces[1])));
+      return b.maxX - b.minX;
+    })();
+    const zipW = (() => {
+      const b = bounds(vertices(flattenPiece(set.pieces[2])));
+      return b.maxX - b.minX;
+    })();
+    near(sideW + zipW, Math.PI * 25, 1e-6);
+  });
+
+  it('지퍼단폭×2 + 지퍼두께(1cm) = 바닥두께 z(10cm)', () => {
+    const b = bounds(vertices(flattenPiece(set.pieces[2])));
+    near((b.maxY - b.minY) * 2 + 1, 10, 1e-6);
+  });
+});
+
+// ── 각진 사각(sharpTrap): rt=rb=0 ──
+describe('boston-zip 각진 사각(sharpTrap) 경로', () => {
+  const set = buildBostonPattern({
+    shape: 'sharpTrap',
+    topW: 300,
+    bottomW: 300,
+    H: 200,
+    rt: 0,
+    rb: 0,
+    z: 100,
+    zipPct: 40,
+  });
+
+  it('둘레 = computePanel(30,30,20,0,0).perimeter = 2·30+2·20 = 100', () => {
+    near(perimeter(30, 30, 20, 0, 0), 100);
+  });
+
+  it('앞뒤판은 각져서 곡선 세그먼트 없음 (모두 line)', () => {
+    expect(set.pieces[0].segments.every((s) => s.kind === 'line')).toBe(true);
+  });
+
+  it('조각 3개 + 지퍼단폭×2+1=z', () => {
+    expect(set.pieces).toHaveLength(3);
+    const b = bounds(vertices(flattenPiece(set.pieces[2])));
+    near((b.maxY - b.minY) * 2 + 1, 10, 1e-6);
+  });
+});

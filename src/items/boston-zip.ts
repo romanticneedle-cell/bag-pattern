@@ -19,15 +19,22 @@
 import type { Mark, PatternSet, Piece, Pt, Segment } from '../core/types';
 import { bounds, cutVertices } from '../core/allowance';
 import { flattenPiece } from '../core/flatten';
+import { buildRoundPattern } from './round-tambourine';
+
+export type CapShape = 'circle' | 'roundedTrap' | 'sharpTrap';
 
 export interface BostonParams {
-  topW: number; // 윗변 폭 (mm)
-  bottomW: number; // 아랫변 폭 (mm)
-  H: number; // 세로 (mm)
-  rt: number; // 위 모서리 반지름 (mm)
-  rb: number; // 아래 모서리 반지름 (mm)
+  shape?: CapShape; // 앞뒤판 모양 (기본 roundedTrap)
   z: number; // 바닥두께 (mm)
-  zipPct: number; // 지퍼 구간 = 세로의 % (0~100)
+  zipPct: number; // 지퍼 구간 = 세로(원은 지름)의 % (0~100)
+  // circle
+  D?: number; // 지름 (mm)
+  // roundedTrap / sharpTrap
+  topW?: number; // 윗변 폭 (mm)
+  bottomW?: number; // 아랫변 폭 (mm)
+  H?: number; // 세로 (mm)
+  rt?: number; // 위 모서리 반지름 (mm) — sharpTrap 은 0
+  rb?: number; // 아래 모서리 반지름 (mm) — sharpTrap 은 0
 }
 
 // 고정 상수 (cm)
@@ -280,12 +287,20 @@ function cutBounds(piece: Piece) {
 
 /** 전체 패턴 세트 생성. 입력은 mm, 내부에서 cm 로 변환. */
 export function buildBostonPattern(pmm: BostonParams): PatternSet {
+  const shape: CapShape = pmm.shape ?? 'roundedTrap';
+
+  // 원(circle): 앞뒤판이 원인 경우 = 탬버린백 로직 그대로 재사용.
+  if (shape === 'circle') {
+    return buildRoundPattern({ D: pmm.D ?? 0, z: pmm.z, zipPct: pmm.zipPct });
+  }
+
+  // 사다리꼴(roundedTrap) / 각진 사각(sharpTrap: rt=rb=0)
   // mm → cm
-  const topW = pmm.topW / 10;
-  const bottomW = pmm.bottomW / 10;
-  const H = pmm.H / 10;
-  const rt = pmm.rt / 10;
-  const rb = pmm.rb / 10;
+  const topW = (pmm.topW ?? 0) / 10;
+  const bottomW = (pmm.bottomW ?? 0) / 10;
+  const H = (pmm.H ?? 0) / 10;
+  const rt = (pmm.rt ?? 0) / 10;
+  const rb = (pmm.rb ?? 0) / 10;
   const z = pmm.z / 10;
   const zipPct = pmm.zipPct;
 
@@ -399,27 +414,49 @@ export function buildBostonPattern(pmm: BostonParams): PatternSet {
 // 아이템 메타/입력 정의 (UI 가 참조)
 export const bostonZipItem = {
   id: 'boston-zip',
-  name: '지퍼 보스턴백 (둥근 모서리)',
+  name: '지퍼 보스턴백',
+  select: {
+    key: 'shape',
+    label: '앞뒤판 모양',
+    options: [
+      { value: 'circle', label: '원' },
+      { value: 'roundedTrap', label: '둥근 사다리꼴' },
+      { value: 'sharpTrap', label: '각진 사각/사다리꼴' },
+    ],
+    default: 'roundedTrap',
+  },
   inputs: [
-    { key: 'topW', label: '윗변 폭', unit: 'mm', default: 260 },
-    { key: 'bottomW', label: '아랫변 폭', unit: 'mm', default: 320 },
-    { key: 'H', label: '세로', unit: 'mm', default: 200 },
-    { key: 'rt', label: '위 모서리 R', unit: 'mm', default: 40 },
-    { key: 'rb', label: '아래 모서리 R', unit: 'mm', default: 60 },
+    // circle
+    { key: 'D', label: '지름', unit: 'mm', default: 250, showFor: ['circle'] },
+    // roundedTrap
+    { key: 'topW', label: '윗변', unit: 'mm', default: 260, showFor: ['roundedTrap'] },
+    { key: 'bottomW', label: '아랫변', unit: 'mm', default: 320, showFor: ['roundedTrap'] },
+    { key: 'H', label: '세로', unit: 'mm', default: 200, showFor: ['roundedTrap'] },
+    { key: 'rt', label: '위 모서리 R', unit: 'mm', default: 40, showFor: ['roundedTrap'] },
+    { key: 'rb', label: '아래 모서리 R', unit: 'mm', default: 60, showFor: ['roundedTrap'] },
+    // sharpTrap (각짐: rt=rb=0). 별도 키로 고유 기본값 유지.
+    { key: 'stopW', label: '윗변', unit: 'mm', default: 300, showFor: ['sharpTrap'] },
+    { key: 'sbottomW', label: '아랫변', unit: 'mm', default: 300, showFor: ['sharpTrap'] },
+    { key: 'sH', label: '세로', unit: 'mm', default: 200, showFor: ['sharpTrap'] },
+    // 공통
     { key: 'z', label: '바닥두께', unit: 'mm', default: 100 },
     { key: 'zipPct', label: '지퍼구간(세로%)', unit: '%', default: 40 },
   ],
-  toggles: [{ key: 'sharpCorners', label: '모서리 각지게 (안 둥글림)', default: false }],
   calibrationCm: 5, // 검증 사각형 5cm
-  // 폼 값·토글 → build 파라미터. '모서리 각지게' 체크 시 위/아래 R 을 0 으로.
-  deriveParams: (v: Record<string, number>, t: Record<string, boolean>): BostonParams => ({
-    topW: v.topW,
-    bottomW: v.bottomW,
-    H: v.H,
-    rt: t.sharpCorners ? 0 : v.rt,
-    rb: t.sharpCorners ? 0 : v.rb,
-    z: v.z,
-    zipPct: v.zipPct,
-  }),
+  // 폼 값·선택 → build 파라미터. 모양에 따라 관련 입력만 사용.
+  deriveParams: (
+    v: Record<string, number>,
+    _t: Record<string, boolean>,
+    s: Record<string, string>,
+  ): BostonParams => {
+    const shape = (s.shape as CapShape) ?? 'roundedTrap';
+    const z = v.z;
+    const zipPct = v.zipPct;
+    if (shape === 'circle') return { shape, z, zipPct, D: v.D };
+    if (shape === 'sharpTrap') {
+      return { shape, z, zipPct, topW: v.stopW, bottomW: v.sbottomW, H: v.sH, rt: 0, rb: 0 };
+    }
+    return { shape, z, zipPct, topW: v.topW, bottomW: v.bottomW, H: v.H, rt: v.rt, rb: v.rb };
+  },
   build: buildBostonPattern,
 } as const;
