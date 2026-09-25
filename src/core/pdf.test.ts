@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
-import { buildPatternPdf, PT_PER_CM } from './pdf';
+import { buildPatternPdf, buildRollPdf, PT_PER_CM } from './pdf';
 import { buildTotePattern } from '../items/tote-cross';
 import { buildBostonPattern } from '../items/boston-zip';
+import { buildCenterZipPattern } from '../items/boston-center-zip';
 
 const params = { x: 30, y: 35, z: 10, strapLength: 60, strapWidth: 2.5 };
 
@@ -66,5 +67,27 @@ describe('buildPatternPdf', () => {
     const ko = await buildPatternPdf(set, { koreanFont: ab, calibrationCm: 5 });
     expect(ko.length).toBeGreaterThan(1000);
     expect(String.fromCharCode(ko[0], ko[1], ko[2], ko[3])).toBe('%PDF');
+  });
+
+  it('가운데 가로지퍼 보스턴백(통짜 몸판+골선+지퍼 guide)도 A4·A1롤 모두 생성된다', async () => {
+    const set = buildCenterZipPattern({
+      shape: 'roundedTrap',
+      L: 400,
+      topW: 260,
+      bottomW: 320,
+      capH: 200,
+      rt: 40,
+      rb: 60,
+    });
+    // A4 분할
+    const a4 = await buildPatternPdf(set, { calibrationCm: 5 });
+    expect(a4.length).toBeGreaterThan(1000);
+    expect(String.fromCharCode(a4[0], a4[1], a4[2], a4[3])).toBe('%PDF');
+
+    // A1 롤: 단일 페이지, 폭 610mm
+    const roll = await buildRollPdf(set, { calibrationCm: 5 });
+    const doc = await PDFDocument.load(roll);
+    expect(doc.getPageCount()).toBe(1);
+    expect(Math.abs(doc.getPage(0).getWidth() - 61.0 * PT_PER_CM)).toBeLessThan(0.01);
   });
 });

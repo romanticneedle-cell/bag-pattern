@@ -115,6 +115,8 @@ const ROMAN: Record<string, string> = {
   '앞뒤판 (×2)': 'FRONT/BACK x2',
   '옆면~바닥판': 'SIDE+BOTTOM',
   '지퍼단 (×2)': 'ZIPPER x2',
+  '옆판 (×2)': 'SIDE x2',
+  몸판: 'BODY PANEL',
 };
 
 const ASCII: Strings = {

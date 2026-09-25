@@ -9,7 +9,7 @@ export function renderPreview(
   patternEl: HTMLElement,
   illoEl: HTMLElement,
   item: ItemDef,
-  params: Record<string, number>,
+  params: Record<string, unknown>,
 ): void {
   const set: PatternSet = (item.build as (p: unknown) => PatternSet)(params);
   patternEl.innerHTML = renderPatternSVG(set, { maxWidth: 520 });

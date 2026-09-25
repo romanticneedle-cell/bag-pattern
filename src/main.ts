@@ -78,15 +78,20 @@ for (const it of items) {
 let currentItem: ItemDef = items[0];
 let form: FormHandle;
 
-// 아이템별로 폼 값·토글을 build 파라미터로 변환한다.
-// deriveParams 가 있으면 사용(토트의 '끈 안 만들기' 등), 없으면 숫자 값을 그대로 쓴다.
-function deriveParams(item: ItemDef): Record<string, number> {
+// 아이템별로 폼 값·토글·선택을 build 파라미터로 변환한다.
+// deriveParams 가 있으면 사용(토트의 '끈 안 만들기', 보스턴 옆판 모양 등), 없으면 숫자 값 그대로.
+function deriveParams(item: ItemDef): Record<string, unknown> {
   const values = form.getValues();
   const toggles = form.getToggles();
+  const selects = form.getSelects();
   const dp = (item as unknown as {
-    deriveParams?: (v: Record<string, number>, t: Record<string, boolean>) => Record<string, number>;
+    deriveParams?: (
+      v: Record<string, number>,
+      t: Record<string, boolean>,
+      s: Record<string, string>,
+    ) => Record<string, unknown>;
   }).deriveParams;
-  return dp ? dp(values, toggles) : values;
+  return dp ? dp(values, toggles, selects) : values;
 }
 
 // 선택된 아이템으로 폼을 다시 만들고 부제/일러스트를 갱신한다.
