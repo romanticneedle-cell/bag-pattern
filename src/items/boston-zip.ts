@@ -21,7 +21,7 @@ import { bounds, cutVertices } from '../core/allowance';
 import { flattenPiece } from '../core/flatten';
 import { buildRoundPattern } from './round-tambourine';
 
-export type CapShape = 'circle' | 'roundedTrap' | 'sharpTrap';
+export type CapShape = 'circle' | 'roundedTrap' | 'sharpTrap' | 'topRoundTrap';
 
 export interface BostonParams {
   shape?: CapShape; // 앞뒤판 모양 (기본 roundedTrap)
@@ -421,6 +421,7 @@ export const bostonZipItem = {
     options: [
       { value: 'circle', label: '원' },
       { value: 'roundedTrap', label: '둥근 사다리꼴' },
+      { value: 'topRoundTrap', label: '위 둥글고 아래 각짐' },
       { value: 'sharpTrap', label: '각진 사각/사다리꼴' },
     ],
     default: 'roundedTrap',
@@ -434,6 +435,11 @@ export const bostonZipItem = {
     { key: 'H', label: '세로', unit: 'mm', default: 200, showFor: ['roundedTrap'] },
     { key: 'rt', label: '위 모서리 R', unit: 'mm', default: 40, showFor: ['roundedTrap'] },
     { key: 'rb', label: '아래 모서리 R', unit: 'mm', default: 60, showFor: ['roundedTrap'] },
+    // topRoundTrap (위 둥글고 아래 각짐: rt>0, rb=0). 별도 키로 고유 기본값 유지.
+    { key: 'ttopW', label: '윗변', unit: 'mm', default: 260, showFor: ['topRoundTrap'] },
+    { key: 'tbottomW', label: '아랫변', unit: 'mm', default: 320, showFor: ['topRoundTrap'] },
+    { key: 'tH', label: '세로', unit: 'mm', default: 200, showFor: ['topRoundTrap'] },
+    { key: 'trt', label: '위 모서리 R', unit: 'mm', default: 50, showFor: ['topRoundTrap'] },
     // sharpTrap (각짐: rt=rb=0). 별도 키로 고유 기본값 유지.
     { key: 'stopW', label: '윗변', unit: 'mm', default: 300, showFor: ['sharpTrap'] },
     { key: 'sbottomW', label: '아랫변', unit: 'mm', default: 300, showFor: ['sharpTrap'] },
@@ -455,6 +461,10 @@ export const bostonZipItem = {
     if (shape === 'circle') return { shape, z, zipPct, D: v.D };
     if (shape === 'sharpTrap') {
       return { shape, z, zipPct, topW: v.stopW, bottomW: v.sbottomW, H: v.sH, rt: 0, rb: 0 };
+    }
+    if (shape === 'topRoundTrap') {
+      // 위만 둥글게(rt), 아래는 각지게(rb=0)
+      return { shape, z, zipPct, topW: v.ttopW, bottomW: v.tbottomW, H: v.tH, rt: v.trt, rb: 0 };
     }
     return { shape, z, zipPct, topW: v.topW, bottomW: v.bottomW, H: v.H, rt: v.rt, rb: v.rb };
   },
